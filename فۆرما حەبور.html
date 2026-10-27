@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ckb" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>فۆرما حەبور</title>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<style>
+:root{--bg:#f6f5f1;--fg:#1d1d1b;--card:#fff;--bd:#d8d5cc;--ac:#1f5f8b;--wr:#9a5b00}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1b19;--fg:#f0eee8;--card:#262623;--bd:#44433e;--ac:#6bb0dd;--wr:#e8b05a}}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,"Segoe UI",Tahoma,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:14px}
+label{display:block;font-weight:600;margin-bottom:6px}
+input[type=file]{width:100%;max-width:100%}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer;margin:6px 0 0 6px}
+button:disabled{opacity:.5}
+input[type=text]{width:100%;box-sizing:border-box;padding:6px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;direction:ltr;text-align:left}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:640px}
+td,th{border:1px solid var(--bd);padding:4px;font-size:14px}
+.wr{color:var(--wr);font-weight:600}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>div{flex:1;min-width:200px}
+</style>
+</head>
+<body>
+<main>
+<h1>فۆرما حەبور — لیستا ڕێبواران</h1>
+<div class="card">
+<label>١. وێنەیێ سەنەوی (ئێک وێنە)</label>
+<input type="file" id="reg" accept="image/*">
+<label style="margin-top:12px">٢. وێنەیێن پاسپۆرتان (هەمی پاسپۆرتان ب ئێکەڤە)</label>
+<input type="file" id="pass" accept="image/*" multiple>
+<button id="go">زانیاریان دەربێخە</button>
+<div id="msg"></div>
+</div>
+<div class="card" id="rev" hidden>
+<div id="warn"></div>
+<div class="row">
+<div><label>PLAKA NO</label><input type="text" id="plate"></div>
+<div><label>GİDECEĞİ ÜLKE</label><input type="text" id="ctry" value="T.C. - Irak"></div>
+</div>
+<div class="tw"><table><thead><tr><th>#</th><th>ناڤ (٣ پارچە)</th><th>PASAPORT NO.</th><th>ساڵا لەدایکبوونێ</th></tr></thead><tbody id="tb"></tbody></table></div>
+<button id="dl">Word + PDF دابەزینە</button>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let sample=null,dls=null;
+(async()=>{try{sample=await claude.use("sample");dls=await claude.use("downloads");}catch(e){}
+if(!sample)$("msg").innerHTML='<p class="wr">ئەڤ پەیج ل ڤێرێ ناکەڤیتە کار، ب claude.ai ڤەکە.</p>';})();
+let data={plate:"",pax:[]};
+function render(){
+ $("rev").hidden=false;$("plate").value=data.plate;
+ $("tb").innerHTML="";
+ for(let i=0;i<10;i++){const p=data.pax[i]||{name:"",passport:"",year:""};
+  const tr=document.createElement("tr");
+  tr.innerHTML=`<td>${i+1}</td><td><input type="text" data-i="${i}" data-k="name"></td><td><input type="text" data-i="${i}" data-k="passport"></td><td><input type="text" data-i="${i}" data-k="year"></td>`;
+  tr.querySelector('[data-k=name]').value=p.name;tr.querySelector('[data-k=passport]').value=p.passport;tr.querySelector('[data-k=year]').value=p.year;
+  $("tb").appendChild(tr);}
+}
+function collect(){
+ const pax=[];document.querySelectorAll("#tb tr").forEach(tr=>{const v=k=>tr.querySelector(`[data-k=${k}]`).value.trim();pax.push({name:v("name"),passport:v("passport"),year:v("year")});});
+ return{plate:$("plate").value.trim(),ctry:$("ctry").value.trim(),pax};
+}
+$("go").onclick=async()=>{
+ const reg=$("reg").files[0],ps=[...$("pass").files];
+ if(!reg||!ps.length){$("msg").innerHTML='<p class="wr">سەنەوی و پاسپۆرتان بار بکە.</p>';return;}
+ if(!sample){return;}
+ $("go").disabled=true;$("msg").textContent="دخوینیت...";
+ try{
+  const prompt=`Image 1 is a vehicle registration document (sanawi). Images 2..${ps.length+1} are passports (one or more per image). Extract and return ONLY JSON:
+{"plate":"plate number exactly as on the registration","driver":"owner/driver name from the registration, Latin letters","passengers":[{"name":"full name in Latin letters, three parts: own name + father name + grandfather name, from the passport","passport":"passport number","year":"birth year only, 4 digits"}],"unclear":["short note for each name/number that is not clearly readable"]}
+Rules: the passenger whose passport name matches the registration driver must be first. Others follow in image order. Do not guess unclear values: leave them "" and add a note in "unclear". Birth year only, no place.`;
+  const r=await sample.json(prompt,{images:[reg,...ps],modelTier:"complex",cache:false});
+  data={plate:r.plate||"",pax:(r.passengers||[]).slice(0,10)};
+  render();
+  $("warn").innerHTML=(r.unclear&&r.unclear.length)?'<p class="wr">ڕوون نەبوو، ڕاست بکە: '+r.unclear.map(s=>String(s).replace(/</g,"&lt;")).join(" • ")+'</p>':"";
+  $("msg").textContent="";
+ }catch(e){$("msg").innerHTML='<p class="wr">خەلەتی: '+(e.message||e.code||"")+'</p>';}
+ $("go").disabled=false;
+};
+const T1="HABUR YOLCU SALONU GÜMRÜK MÜDÜRLÜĞÜNE",T2="HUSUSİ ARAÇLAR",T3="GİRİŞ – ÇIKIŞ YOLCU LİSTESİ";
+const DECL="Aracımda yurda girmesi ve yurtdışına cıkması yasak, kacak ve ticari mahiyette eşya bulunmadığını, aracimda bulunan şahislardan herhangi bir ücret talep etmediğimi ve  almadiğimi beyan ve taahhüt ederim.";
+const HEAD=["SIRA\nNO.","ŞOFÖR VE YOLCUNUN ADI VE SOYADI","PASAPORT NO.","DOĞUM YERİ VE TARİHİ","GİDECEĞİ ÜLKE"];
+function rows(d){const out=[];for(let i=0;i<10;i++){const p=d.pax[i]||{};out.push([(i+1)+".",p.name||"",p.passport||"",p.year||"",p.name?d.ctry:""]);}return out;}
+async function makeDocx(d){
+ const D=docx,F="Times New Roman",tx=(t,o={})=>new D.TextRun({text:t,font:F,...o});
+ const c=(t,o={})=>new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{after:60},children:[tx(t,o)]});
+ const W=[700,3700,1800,1700,1500];
+ const mk=(r,h)=>new D.TableRow({children:r.map((t,i)=>new D.TableCell({width:{size:W[i],type:D.WidthType.DXA},children:t.split("\n").map(s=>new D.Paragraph({alignment:D.AlignmentType.CENTER,children:[tx(s,{bold:h,size:20})]}))}))});
+ const sg=["Gümrük Muhafaza  Müdürlüğü","Polis","Gümrük  Müdürlüğü",""],sg2=["","","Tescil","Muayene Memuru"];
+ const W2=[2700,2000,2700,2000];
+ const t2=new D.Table({width:{size:9400,type:D.WidthType.DXA},columnWidths:W2,rows:[sg,sg2,["","","",""]].map((r,ri)=>new D.TableRow({height:{value:ri==2?700:400,rule:"atLeast"},children:r.map((t,i)=>new D.TableCell({width:{size:W2[i],type:D.WidthType.DXA},children:[new D.Paragraph({alignment:D.AlignmentType.CENTER,children:[tx(t,{size:20})]})]}))}))});
+ const doc=new D.Document({sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:567,bottom:567,left:567,right:567}}},children:[
+  c(T1,{bold:true,size:28}),c(T2,{bold:true,size:24}),c(T3,{bold:true,size:24}),
+  new D.Paragraph({tabStops:[{type:D.TabStopType.RIGHT,position:10700}],spacing:{before:200,after:200},children:[tx("PLAKA NO:    ",{bold:true}),tx(d.plate,{bold:true}),tx("\tTARIH:        /        /        ",{bold:true})]}),
+  new D.Table({width:{size:9400,type:D.WidthType.DXA},columnWidths:W,rows:[mk(HEAD,true),...rows(d).map(r=>mk(r,false))]}),
+  new D.Paragraph({spacing:{before:200,after:200},children:[tx(DECL,{size:22})]}),
+  new D.Paragraph({spacing:{after:120},children:[tx("    ŞOFÖR ADI - SOYADI  ",{bold:true}),tx(d.pax[0]&&d.pax[0].name||"")]}),
+  t2,
+  new D.Paragraph({alignment:D.AlignmentType.RIGHT,spacing:{before:200},children:[tx("İMZA",{bold:true})]}),
+  new D.Paragraph({spacing:{before:200},children:[tx("Tel: 07504676116 - 07508676116 - Sigorta - Tergome ",{bold:true,size:22})]})
+ ]}]});
+ return D.Packer.toBlob(doc);
+}
+function makePdf(d){
+ const {jsPDF}=window.jspdf,p=new jsPDF({unit:"pt",format:"a4"});
+ let y=50;p.setFont("times","bold");
+ [[T1,14],[T2,12],[T3,12]].forEach(([t,s])=>{p.setFontSize(s);p.text(t,297.6,y,{align:"center"});y+=20;});
+ p.setFontSize(11);y+=10;p.text("PLAKA NO:    "+d.plate,30,y);p.text("TARIH:        /        /",565,y,{align:"right"});
+ p.autoTable({startY:y+10,head:[HEAD.map(h=>h.replace("\n"," "))],body:rows(d),theme:"grid",styles:{font:"times",fontSize:9,halign:"center",textColor:0,lineColor:0,lineWidth:.5,minCellHeight:22},headStyles:{fillColor:255,textColor:0,fontStyle:"bold"},margin:{left:30,right:30}});
+ y=p.lastAutoTable.finalY+20;p.setFont("times","normal");p.setFontSize(10);
+ p.text(p.splitTextToSize(DECL,535),30,y);y+=40;p.setFont("times","bold");
+ p.text("ŞOFÖR ADI - SOYADI  "+(d.pax[0]&&d.pax[0].name||""),30,y);
+ p.autoTable({startY:y+8,body:[["Gümrük Muhafaza  Müdürlüğü","Polis","Gümrük  Müdürlüğü",""],["","","Tescil","Muayene Memuru"],["","","",""]],theme:"grid",styles:{font:"times",fontSize:9,halign:"center",textColor:0,lineColor:0,lineWidth:.5,minCellHeight:24},margin:{left:30,right:30}});
+ y=p.lastAutoTable.finalY+20;p.text("İMZA",565,y,{align:"right"});p.text("Tel: 07504676116 - 07508676116 - Sigorta - Tergome ",30,y+30);
+ return p.output("blob");
+}
+$("dl").onclick=async()=>{
+ const d=collect();if(!dls){$("msg").textContent="دابەزاندن بەردەست نینە.";return;}
+ const base="Habur_Yolcu_Listesi_"+(d.plate.replace(/[^A-Za-z0-9]/g,"")||"form");
+ try{
+  await dls.save({filename:base+".docx",data:await makeDocx(d)});
+  await dls.save({filename:base+".pdf",data:makePdf(d)});
+ }catch(e){if(e&&e.code!=="declined")alert(e.message||e.code);}
+};
+</script>
+</body>
+</html>
